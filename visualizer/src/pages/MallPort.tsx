@@ -180,6 +180,12 @@ const MallPort: React.FC = () => {
     });
   }, []);
 
+  const [selectedNode, setSelectedNode] = useState<number | null>(null);
+
+  const handleNodeClick = useCallback((node: any) => {
+    setSelectedNode(prev => (prev === node.id ? null : node.id));
+  }, []);
+
   // ── Graph structure (static topology shape only) ──────────────────────────
   const graphData = React.useMemo(() => {
     if (!topology) return { nodes: [], links: [] };
@@ -524,7 +530,66 @@ const MallPort: React.FC = () => {
           d3VelocityDecay={0.3}
           onEngineStop={() => fgRef.current?.zoomToFit(500, 80)}
           backgroundColor="transparent"
+          onNodeClick={handleNodeClick}
+          onBackgroundClick={() => setSelectedNode(null)}
         />
+
+        {/* ── Live Node Inspector ─────────────────────────── */}
+        {selectedNode !== null && simState && topology && selectedNode < topology.labels.length && (() => {
+          const id = selectedNode;
+          const total = simState.node_counts.reduce((a, b) => a + b, 0) || 1;
+          const occ = simState.node_counts[id] || 0;
+          const outflow = (simState.edge_counts[id] || []).reduce((a, b) => a + b, 0);
+          const inflow = simState.edge_counts.reduce((a, row) => a + (row[id] || 0), 0);
+          const outbound = topology.labels
+            .map((label, j) => ({ label, transit: simState.edge_counts[id]?.[j] || 0 }))
+            .filter(x => x.transit > 0)
+            .sort((a, b) => b.transit - a.transit)
+            .slice(0, 6);
+          return (
+            <div style={{
+              position: 'absolute', top: 20, left: 20, zIndex: 100,
+              background: 'var(--bg-panel)', border: '1px solid var(--border-bright)',
+              borderRadius: 'var(--radius-md)', padding: '16px 18px', minWidth: 220,
+              boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <h3 style={{ fontSize: 13, fontWeight: 600, color: 'var(--amber)' }}>{topology.labels[id]}</h3>
+                <button type="button" aria-label="Close node inspector" onClick={() => setSelectedNode(null)}
+                  style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: 0 }}>×</button>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
+                {([
+                  ['Agents here', `${occ}`, 'var(--green)'],
+                  ['Share of population', `${(occ / total * 100).toFixed(1)}%`, 'var(--blue)'],
+                  ['Inflow (transits)', `${inflow}`, 'var(--purple)'],
+                  ['Outflow (transits)', `${outflow}`, 'var(--amber)'],
+                ] as [string, string, string][]).map(([label, val, col]) => (
+                  <div key={label} style={{
+                    display: 'flex', justifyContent: 'space-between', fontSize: 11,
+                    padding: '3px 0', borderBottom: '1px solid var(--border-dim)',
+                  }}>
+                    <span style={{ color: 'var(--text-secondary)' }}>{label}</span>
+                    <span style={{ fontFamily: 'JetBrains Mono', color: col }}>{val}</span>
+                  </div>
+                ))}
+              </div>
+              {outbound.length > 0 && (
+                <>
+                  <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)', fontWeight: 600, marginBottom: 8 }}>
+                    Transits by edge
+                  </div>
+                  {outbound.map(({ label, transit }) => (
+                    <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, marginBottom: 4 }}>
+                      <span style={{ color: 'var(--text-secondary)' }}>→ {label}</span>
+                      <span style={{ fontFamily: 'JetBrains Mono', color: 'var(--text-primary)' }}>{transit}</span>
+                    </div>
+                  ))}
+                </>
+              )}
+            </div>
+          );
+        })()}
       </main>
     </div>
   );
