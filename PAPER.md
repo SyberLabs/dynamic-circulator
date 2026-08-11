@@ -54,19 +54,18 @@ primitive for it with edges that can be activated or pruned over a fixed physica
 and the beginnings of an answer: consolidation that is too eager builds infrastructure that
 then traps the system, and only a release mechanism (not the same force that built it)
 undoes it. A topology that reshapes itself through use, and can also let go of what it built,
-is the object this kernel is aimed at.
+is the premise of the next object in this line, which will feature typed rewrites under stochastic events, instead of the fixed-substrate approximation the present kernel allows.
 
 ## Scope and Limits
 
 The **process** here is genuinely dynamic and non-stationary. The **graph** is, within a
-run, fixed; self-rewriting is scaffolding and a direction, not a result. The demo topologies
-are abstractions for exploring mechanism, not calibrated models of any real
+run, fixed; self-rewriting is a property which will belong more fully to the next object in our line. The demo topologies are abstractions for exploring mechanism, not calibrated models of any real
 system. The value of the object is that it puts attractiveness, feasibility, adaptation, and
 the *reachability of an intervention* into one place where they can be distinguished and
 where the difference between a route that is attractive, a route that is usable, a route that
 is selected, and a route that remains chosen after the environment changes is observable and measurable.
 
-As the title alludes to, our next investigation will lie in expressing self-modifying topology rigorously via typed rules under stochastic events. 
+We treat the Dynamic Circulator as the first in a series. This object fixes the topology and asks what interventions can do; the next lets the topology itself change, expressing self-modifying structure rigorously via typed rules under stochastic events. Both are unified under the objective of simulating "circulation that shapes circulation".
 
 — SyberLabs, August 2026
 
