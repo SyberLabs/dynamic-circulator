@@ -11,7 +11,7 @@ position process alone is non-stationary; the joint (position, telemetry) proces
 
 This repository is the **software** artifact of the project: the kernel, a population
 simulator, a small set of demo topologies, a FastAPI service, and a browser visualizer.
-The conceptual motivation, and the boundary of what "dynamic" means here — is in
+The conceptual motivation, and the boundary of what "dynamic" means here, is in
 [`PAPER.md`](PAPER.md).
 
 ## Quickstart
@@ -32,11 +32,11 @@ npm run dev            # opens the Control Hub; proxies /api to :8000
 The **Control Hub** is the front door. Pick a graph (mall, airport, museum, city
 topologies, …), then open one of three surfaces:
 
-- **Kernel Inspector** — change agent intent and exploration temperature and watch the
+- **Kernel Inspector**: change agent intent and exploration temperature and watch the
   transition field reshape route probabilities in real time.
-- **Agent Flow Simulator** — release a population and watch live node occupancy and edge
+- **Agent Flow Simulator**: release a population and watch live node occupancy and edge
   traffic respond to crowd mix and interventions.
-- **Topology Comparison** — run two graphs side by side under matched conditions.
+- **Topology Comparison**: run two graphs side by side under matched conditions.
 
 ## The kernel in one object
 
@@ -45,10 +45,10 @@ from kernel import DynamicCirculator   # alias of DynamicTopologyKernel
 ```
 
 Beyond routing, the kernel carries the research instruments the project was built to ask
-questions with: a stationary-**leverage** field (`edge_leverage`, `stationary_leverage`) —
-the first-order sensitivity of long-run circulation to an edge intervention — and an
-effective-topology primitive (`set_edge_active`) that activates or prunes edges over a fixed
-substrate. These are the seeds of the direction named in the paper: *towards a dynamic
+questions with: a stationary-**leverage** field (`edge_leverage`, `stationary_leverage`),
+which measures the first-order sensitivity of long-run circulation to an edge intervention,
+and an effective-topology primitive (`set_edge_active`) that activates or prunes edges over a
+fixed substrate. These are the seeds of the direction named in the paper: *towards a dynamic
 topology*.
 
 ## Scope and Limits
