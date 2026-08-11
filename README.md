@@ -3,7 +3,7 @@
 *A telemetry-conditioned circulation kernel for non-stationary routing over weighted graphs.*
 
 Agents move over a directed, feature-decorated graph. Where each agent goes next is a
-softmax over edge weights that depend on three things at once — the physical friction of an
+softmax over edge weights that depend on three factors: the physical friction of an
 edge, how well the agent's current **telemetry** (its intent/state) aligns with the
 destination, and any intervention applied to that edge. After a move, the visited node
 writes back into the agent's telemetry. Routing shapes state; state reshapes routing. The
@@ -11,7 +11,7 @@ position process alone is non-stationary; the joint (position, telemetry) proces
 
 This repository is the **software** artifact of the project: the kernel, a population
 simulator, a small set of demo topologies, a FastAPI service, and a browser visualizer.
-The conceptual motivation — and the honest boundary of what "dynamic" means here — is in
+The conceptual motivation, and the boundary of what "dynamic" means here — is in
 [`PAPER.md`](PAPER.md).
 
 ## Quickstart
@@ -51,10 +51,10 @@ effective-topology primitive (`set_edge_active`) that activates or prunes edges 
 substrate. These are the seeds of the direction named in the paper: *towards a dynamic
 topology*.
 
-## Scope, honestly
+## Scope and Limits
 
 The **process** is dynamic and non-stationary; the **graph** is, today, fixed within a run.
-True combinatorial self-rewriting — a topology that reorganizes itself through use — is a
+True combinatorial self-rewriting, a topology that reorganizes itself through use, is a
 research direction the kernel is built toward, not a delivered guarantee. Claims here are
 kept to what the code demonstrably does.
 
