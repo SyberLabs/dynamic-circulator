@@ -59,7 +59,7 @@ is the premise of the next object in this line, which will feature typed rewrite
 ## Scope and Limits
 
 The **process** here is genuinely dynamic and non-stationary. The **graph** is, within a
-run, fixed; self-rewriting is a property which will belong more fully to the next object in our line. The demo topologies are abstractions for exploring mechanism, not calibrated models of any real
+run, fixed; self-rewriting is a property which will belong more fully to the next object in this line. The demo topologies are abstractions for exploring mechanism, not calibrated models of any real
 system. The value of the object is that it puts attractiveness, feasibility, adaptation, and
 the *reachability of an intervention* into one place where they can be distinguished and
 where the difference between a route that is attractive, a route that is usable, a route that
