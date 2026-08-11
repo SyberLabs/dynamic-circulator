@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "dynamic_kernel"
+name = "dynamic_circulator"
 version = "0.2.0"
-description = "Dynamic topology kernel: population simulator, FastAPI service, and Vite visualizer"
+description = "Dynamic Circulator: a telemetry-conditioned circulation kernel with a population simulator, FastAPI service, and Vite visualizer"
 requires-python = ">=3.10"
 dependencies = [
     "fastapi==0.111.0",

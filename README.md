@@ -1,113 +1,65 @@
-<p align="center">
-  <img src="https://i.imgur.com/8cWt39p.png" width="700">
-</p>
+# Dynamic Circulator
 
-# Dynamic Kernel
+*A telemetry-conditioned circulation kernel for non-stationary routing over weighted graphs.*
 
-Simulation platform for non-stationary routing over weighted graphs and dynamic topology experiments.
+Agents move over a directed, feature-decorated graph. Where each agent goes next is a
+softmax over edge weights that depend on three things at once — the physical friction of an
+edge, how well the agent's current **telemetry** (its intent/state) aligns with the
+destination, and any intervention applied to that edge. After a move, the visited node
+writes back into the agent's telemetry. Routing shapes state; state reshapes routing. The
+position process alone is non-stationary; the joint (position, telemetry) process is Markov.
 
-## Summary
+This repository is the **software** artifact of the project: the kernel, a population
+simulator, a small set of demo topologies, a FastAPI service, and a browser visualizer.
+The conceptual motivation — and the honest boundary of what "dynamic" means here — is in
+[`PAPER.md`](PAPER.md).
 
-Dynamic Kernel is a Python simulation and API platform for studying non-stationary Markov processes over weighted graphs. It combines a vectorized transition kernel, population simulator, domain adapters, FastAPI service, React/Vite visualizer, and a DTE research evidence spine. The broader research direction uses the system to test dynamic topology evolution ideas while keeping claims tied to versioned scripts, output files, reports, and frozen before/after artifacts.
-
-## What It Demonstrates
-
-- Vectorized numerical computing with NumPy for transition matrix construction.
-- Simulation infrastructure for graph routing, population movement, and domain-specific adapters.
-- Backend/frontend integration through FastAPI, WebSockets, and a React/Vite visualizer.
-- Research discipline through manifests, reports, falsification scripts, and scoped claim boundaries.
-- A Hub-first visualizer where the kernel, population simulator, city comparison, and adaptive-router surfaces are immediately visible.
-- DTE-native policy-lane experiments, including the 2026-07-05 EXP3-IX estimator correction and archived pre-fix Neural V2 artifacts.
-
-## Architecture
-
-The core kernel computes transition probabilities over graph edges. Domain adapters define topology presets, the simulator moves populations through the graph, the API exposes diagnostics and live streams, and the visualizer makes the dynamics inspectable.
-
-```mermaid
-flowchart LR
-  A[Domain Adapter] --> B[Graph Topology]
-  B --> C[Vectorized Kernel]
-  C --> D[Transition Matrix]
-  D --> E[Population Simulator]
-  E --> F[Analytics + Reports]
-  E --> G[FastAPI / WebSocket Stream]
-  G --> H[React Visualizer]
-```
-
-## Installation
-
-Backend:
+## Quickstart
 
 ```bash
-python -m venv .venv
-.venv/Scripts/activate
+# backend
 pip install -r requirements.txt
-uvicorn api:app --reload --port 8000
-```
+uvicorn api:app --port 8000
 
-Frontend:
-
-```bash
+# visualizer (separate terminal)
 cd visualizer
 npm install
-npm run dev
+npm run dev            # opens the Control Hub; proxies /api to :8000
 ```
 
-## Usage
+## What you can do
 
-API examples:
+The **Control Hub** is the front door. Pick a graph (mall, airport, museum, city
+topologies, …), then open one of three surfaces:
 
-```text
-GET  /api/topology
-GET  /api/topology/presets
-POST /api/topology/load
-POST /api/diagnostic
-GET  /api/export?format=json
-WS   /api/mall/stream
+- **Kernel Inspector** — change agent intent and exploration temperature and watch the
+  transition field reshape route probabilities in real time.
+- **Agent Flow Simulator** — release a population and watch live node occupancy and edge
+  traffic respond to crowd mix and interventions.
+- **Topology Comparison** — run two graphs side by side under matched conditions.
+
+## The kernel in one object
+
+```python
+from kernel import DynamicCirculator   # alias of DynamicTopologyKernel
 ```
 
-Run tests:
+Beyond routing, the kernel carries the research instruments the project was built to ask
+questions with: a stationary-**leverage** field (`edge_leverage`, `stationary_leverage`) —
+the first-order sensitivity of long-run circulation to an edge intervention — and an
+effective-topology primitive (`set_edge_active`) that activates or prunes edges over a fixed
+substrate. These are the seeds of the direction named in the paper: *towards a dynamic
+topology*.
+
+## Scope, honestly
+
+The **process** is dynamic and non-stationary; the **graph** is, today, fixed within a run.
+True combinatorial self-rewriting — a topology that reorganizes itself through use — is a
+research direction the kernel is built toward, not a delivered guarantee. Claims here are
+kept to what the code demonstrably does.
+
+## Tests
 
 ```bash
-python -m pytest tests/ -v
+pytest tests/     # kernel, simulator, edge-learning, memory law, API surface
 ```
-
-Current public reproduction suite: `144 passed`.
-
-Targeted DTE regression slice:
-
-```bash
-python -m pytest tests/test_review_fixes.py tests/test_neural_v2_router_benchmark.py tests/test_neural_v2_seed_validation.py tests/test_neural_v2_seed_validation_figure.py tests/test_paper_figures.py -q
-```
-
-## Evidence
-
-- Core transition computation is vectorized in NumPy.
-- Includes multiple domain presets such as mall, airport, museum, and supply chain.
-- V1 experiment manifest maps claims to scripts, output artifacts, and required validation.
-- Semiconductor onshoring remains a paper-supporting case-study slice, but it is no longer the primary public demo surface.
-- The DTE paper draft is in `docs/DTE_PAPER_DRAFT.md`.
-- Corrected Neural V2 post-fix artifacts are included at the repository root.
-- Superseded pre-fix EXP3 artifacts are preserved in `archive/pre_estimator_fix_neural_v2/` as an estimator-bias case study.
-- Most exploratory generated outputs remain excluded; selected frozen artifacts needed by the DTE paper are intentionally included.
-
-## Repository Map
-
-- `kernel.py`, `simulator.py`: core DTE runtime.
-- `neural_v2_*.py`: policy-lane benchmark and seed validation.
-- `semiconductor_onshoring_*.py`: optional paper-supporting semiconductor case-study slice.
-- `docs/`: paper draft, theory note, experiment manifest, and generated reports.
-- `figures/` and `visualizer/public/figures/`: paper and visualizer SVG assets.
-- `tests/`: public reproduction suite.
-
-## Known Limitations
-
-- This is a simulation and research platform, not a validated physical, neural, or economic theory.
-- Some generated outputs are large; only selected paper artifacts are packaged here.
-- Several exploratory domains should remain future work unless promoted into a later evidence set.
-- The public repository intentionally omits internal exploratory domains, scratch outputs, local virtual environments, and private lab notes.
-- Related-work positioning in the DTE draft remains a TODO and should receive a literature pass before submission.
-
-## Status
-
-Simulation platform / research systems artifact.

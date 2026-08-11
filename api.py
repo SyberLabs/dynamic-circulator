@@ -14,7 +14,6 @@ from pydantic import BaseModel
 from kernel import DynamicTopologyKernel, topology_from_edges
 from simulator import PopulationSimulator
 from adapters import ADAPTERS, DomainAdapter, get_adapter
-from optimizer import SymmetryOptimizer, SymmetryMode
 from session import (
     DEFAULT_SESSION_ID,
     SessionManager,
@@ -91,8 +90,6 @@ _MAX_QUEUE_SZ  = 5           # max unread frames per client before dropping
 async def lifespan(application: FastAPI):
     asyncio.create_task(_simulation_tick_loop())
     asyncio.create_task(_broadcast_loop())
-    asyncio.create_task(_neural_tick_loop())
-    asyncio.create_task(_neural_broadcast_loop())
     yield
 
 
@@ -116,10 +113,6 @@ app.add_middleware(
 # Shared "latest stats" slot — the broadcast loop reads this
 _latest_stats: dict[str, dict] = {}
 _stats_event = asyncio.Event()
-_neural_stats: dict[str, dict] = {}
-_neural_event = asyncio.Event()
-_neural_queues: dict[WebSocket, tuple[str, asyncio.Queue]] = {}
-_NEURAL_TICK_HZ = 4
 
 
 async def _simulation_tick_loop():
@@ -162,45 +155,6 @@ async def _broadcast_loop():
             _client_queues.pop(ws, None)
 
 
-async def _neural_tick_loop():
-    global _neural_stats
-    interval = 1.0 / _NEURAL_TICK_HZ
-    while True:
-        try:
-            loop = asyncio.get_event_loop()
-            ticked: dict[str, dict] = {}
-            for state in session_manager.all_active():
-                if state.optimizer is None:
-                    continue
-                stats = await loop.run_in_executor(None, state.optimizer.step)
-                ticked[state.session_id] = stats
-            if ticked:
-                _neural_stats = ticked
-                _neural_event.set()
-        except Exception:
-            traceback.print_exc()
-        await asyncio.sleep(interval)
-
-
-async def _neural_broadcast_loop():
-    while True:
-        await _neural_event.wait()
-        _neural_event.clear()
-        dead = []
-        for ws, (session_id, q) in list(_neural_queues.items()):
-            try:
-                stats = _neural_stats.get(session_id)
-                if stats is None:
-                    continue
-                q.put_nowait(stats)
-            except asyncio.QueueFull:
-                pass
-            except Exception:
-                dead.append(ws)
-        for ws in dead:
-            _neural_queues.pop(ws, None)
-
-
 # ---------------------------------------------------------------------------
 # Pydantic models
 # ---------------------------------------------------------------------------
@@ -217,138 +171,6 @@ class TopologyLoadRequest(BaseModel):
     nodes: Optional[dict] = None
     edges: Optional[List] = None
     undirected: bool = True
-
-class NeuralLoadRequest(BaseModel):
-    n_neurons: int = 12
-    density: float = 1.0
-    directed: bool = False
-    telemetry: Optional[List[float]] = None
-    beta_init: float = 3.0
-
-class NeuralOptimizerRequest(BaseModel):
-    mode: Optional[str] = None
-    eta: Optional[float] = None
-    eps: Optional[float] = None
-    beta_max: Optional[float] = None
-    noise_sigma: Optional[float] = None
-    telemetry: Optional[List[float]] = None
-    target_pi: Optional[List[float]] = None
-    composite_lambda: Optional[float] = None
-    composite_utility_type: Optional[str] = None   # "l2" | "kl"
-    normalize_gradient: Optional[bool] = None
-
-class NeuralPhaseRequest(BaseModel):
-    """Run a sequence of optimizer modes on the same kernel without reset."""
-    phases: List[dict]   # [{"mode": str, "steps": int}, ...]
-    reset_between: bool = False
-    beta_init: float = 3.0
-
-class NeuralPauseRequest(BaseModel):
-    paused: bool
-
-class NeuralResetRequest(BaseModel):
-    beta_init: float = 3.0
-
-# ---------------------------------------------------------------------------
-# Neural helpers
-# ---------------------------------------------------------------------------
-
-def _build_neural_session(req: NeuralLoadRequest, session_id: str) -> SessionState:
-    n = max(2, min(int(req.n_neurons), 16))
-    density = max(0.0, min(float(req.density), 1.0))
-    feature_count = len(req.telemetry) if req.telemetry else 4
-    telemetry = np.array(req.telemetry or ([1.0 / feature_count] * feature_count), dtype=np.float64)
-    if telemetry.ndim != 1 or len(telemetry) == 0:
-        telemetry = np.full(4, 0.25)
-        feature_count = 4
-
-    nodes = {
-        f"Neuron {i + 1}": [1.0 / feature_count] * feature_count
-        for i in range(n)
-    }
-
-    rng = np.random.default_rng(42)
-    edges = []
-    if req.directed:
-        for i in range(n):
-            for j in range(n):
-                if i != j and rng.random() <= density:
-                    edges.append((f"Neuron {i + 1}", f"Neuron {j + 1}", 1.0))
-    else:
-        for i in range(n):
-            for j in range(i + 1, n):
-                if rng.random() <= density:
-                    edges.append((f"Neuron {i + 1}", f"Neuron {j + 1}", 1.0))
-
-    if not edges:
-        edges = [(f"Neuron {i + 1}", f"Neuron {((i + 1) % n) + 1}", 1.0) for i in range(n)]
-
-    topo = topology_from_edges(
-        nodes={label: np.array(vec, dtype=np.float64) for label, vec in nodes.items()},
-        edges=edges,
-        undirected=not req.directed,
-    )
-    beta = np.zeros((topo.N, topo.N), dtype=np.float64)
-    beta[topo.adjacency_mask] = float(req.beta_init)
-    kernel = DynamicTopologyKernel(
-        topology=topo,
-        alpha=1.0,
-        beta=beta,
-        feedback_rate=0.0,
-        temperature=1.0,
-        feedback_noise=0.0,
-        node_bias=np.zeros(topo.N),
-    )
-    sim = PopulationSimulator(kernel, K=1, time_multiplier=1.0)
-    adapter = DomainAdapter(
-        key="neural_custom",
-        name="Neural Optimizer",
-        description="Abstract self-organizing beta topology",
-        icon="neural",
-        accent="#9b6cf7",
-        undirected=not req.directed,
-        nodes=nodes,
-        edges=edges,
-        feature_labels=[f"Feature {i}" for i in range(topo.F)],
-        intent_presets={"Uniform": (telemetry / max(float(telemetry.sum()), 1e-12)).tolist()},
-        default_beta=float(req.beta_init),
-        node_biases={},
-        time_multiplier=1.0,
-    )
-    optimizer = SymmetryOptimizer(
-        kernel=kernel,
-        mode=SymmetryMode.ENTROPY_PI,
-        eta=None,           # use MODE_DEFAULT_ETA
-        eps=1e-3,
-        beta_max=20.0,
-        noise_sigma=0.0,    # investigation showed noise is harmful — default off
-        telemetry=telemetry,
-    )
-    return SessionState(session_id, kernel, sim, adapter, 0.0, optimizer=optimizer)
-
-
-def _ensure_neural_session(session_id: str) -> SessionState:
-    state = session_manager.get(session_id)
-    if state.optimizer is None:
-        state = session_manager.set(_build_neural_session(NeuralLoadRequest(), session_id))
-    return state
-
-
-def _neural_payload(state: SessionState) -> dict:
-    if state.optimizer is None:
-        raise HTTPException(400, detail="Session has no neural optimizer")
-    payload = state.optimizer.snapshot()
-    payload["sessionId"] = state.session_id
-    payload["topology"] = _topology_payload(state)
-    payload["config"] = {
-        "eta": state.optimizer.eta,
-        "eps": state.optimizer.eps,
-        "beta_max": state.optimizer.beta_max,
-        "noise_sigma": state.optimizer.noise_sigma,
-        "composite_lambda": state.optimizer.composite_lambda,
-        "target_pi": None if state.optimizer.target_pi is None else state.optimizer.target_pi.tolist(),
-    }
-    return payload
 
 # ---------------------------------------------------------------------------
 # Topology endpoints
@@ -393,109 +215,6 @@ def get_metrics_history(request: Request):
         "history": state.sim.get_metric_history(),
     }
 
-
-@app.post("/api/neural/load")
-def neural_load(req: NeuralLoadRequest, request: Request):
-    session_id = _get_session_id(request)
-    state = session_manager.set(_build_neural_session(req, session_id))
-    return _neural_payload(state)
-
-
-@app.get("/api/neural/state")
-def neural_state(request: Request):
-    state = _ensure_neural_session(_get_session_id(request))
-    return _neural_payload(state)
-
-
-@app.post("/api/neural/optimizer")
-def neural_optimizer(req: NeuralOptimizerRequest, request: Request):
-    state = _ensure_neural_session(_get_session_id(request))
-    try:
-        state.optimizer.configure(
-            mode=req.mode,
-            eta=req.eta,
-            eps=req.eps,
-            beta_max=req.beta_max,
-            noise_sigma=req.noise_sigma,
-            telemetry=req.telemetry,
-            target_pi=req.target_pi,
-            composite_lambda=req.composite_lambda,
-            composite_utility_type=req.composite_utility_type,
-            normalize_gradient=req.normalize_gradient,
-            paused=False,
-        )
-    except ValueError as e:
-        raise HTTPException(400, detail=str(e))
-    return _neural_payload(state)
-
-
-@app.get("/api/neural/gradient")
-def neural_gradient(request: Request):
-    """Return the current N×N gradient matrix ∂Σ/∂β_ij for the active mode.
-    Expensive — call on-demand, not every tick.
-    """
-    state = _ensure_neural_session(_get_session_id(request))
-    if state.optimizer is None:
-        raise HTTPException(400, detail="No neural optimizer on this session")
-    grad = state.optimizer.compute_gradient_matrix()
-    return {
-        "sessionId": state.session_id,
-        "mode": state.optimizer.mode.value,
-        "tick": state.optimizer.tick,
-        "gradient": grad,
-        "N": state.kernel.topo.N,
-    }
-
-
-@app.post("/api/neural/phase_chain")
-def neural_phase_chain(req: NeuralPhaseRequest, request: Request):
-    """Run a sequence of optimizer modes on the same kernel.
-
-    Each phase: {"mode": str, "steps": int}.
-    The kernel state carries over between phases (weights accumulate).
-    Returns the final snapshot plus a per-phase history list.
-    """
-    state = _ensure_neural_session(_get_session_id(request))
-    if state.optimizer is None:
-        raise HTTPException(400, detail="No neural optimizer on this session")
-    if req.reset_between:
-        state.optimizer.reset_beta(beta_init=req.beta_init)
-
-    phase_summaries = []
-    for phase in req.phases:
-        p_mode  = phase.get("mode", "ENTROPY_PI")
-        p_steps = max(1, int(phase.get("steps", 50)))
-        state.optimizer.configure(mode=p_mode, paused=False)
-        start_sigma = state.optimizer._eval_sigma(state.optimizer.kernel._beta)
-        for _ in range(p_steps):
-            state.optimizer.step()
-        end_sigma = state.optimizer._eval_sigma(state.optimizer.kernel._beta)
-        phase_summaries.append({
-            "mode": p_mode,
-            "steps": p_steps,
-            "sigma_start": float(start_sigma),
-            "sigma_end": float(end_sigma),
-            "delta_sigma": float(end_sigma - start_sigma),
-            "final_tick": state.optimizer.tick,
-        })
-
-    payload = _neural_payload(state)
-    payload["phase_summaries"] = phase_summaries
-    return payload
-
-
-@app.post("/api/neural/pause")
-def neural_pause(req: NeuralPauseRequest, request: Request):
-    state = _ensure_neural_session(_get_session_id(request))
-    state.optimizer.configure(paused=req.paused)
-    return _neural_payload(state)
-
-
-@app.post("/api/neural/reset")
-def neural_reset(req: NeuralResetRequest, request: Request):
-    state = _ensure_neural_session(_get_session_id(request))
-    state.optimizer.reset_beta(beta_init=req.beta_init)
-    return _neural_payload(state)
 
 @app.post("/api/topology/load")
 def load_topology(req: TopologyLoadRequest, request: Request):
@@ -740,58 +459,3 @@ async def mall_stream(websocket: WebSocket):
         _client_queues.pop(websocket, None)
 
 
-@app.websocket("/api/neural/stream")
-async def neural_stream(websocket: WebSocket):
-    session_id = (
-        websocket.query_params.get("session_id")
-        or websocket.cookies.get("session_id")
-        or "neural_default"
-    )
-    state = _ensure_neural_session(session_id)
-    await websocket.accept()
-
-    q: asyncio.Queue = asyncio.Queue(maxsize=_MAX_QUEUE_SZ)
-    _neural_queues[websocket] = (state.session_id, q)
-    await websocket.send_json(_neural_payload(state))
-
-    async def _sender():
-        while True:
-            stats = await q.get()
-            await websocket.send_json(stats)
-
-    sender_task = asyncio.create_task(_sender())
-
-    try:
-        while True:
-            try:
-                data = await websocket.receive_json()
-            except WebSocketDisconnect:
-                break
-            except Exception as e:
-                print("Neural WS receive error:", e)
-                break
-
-            try:
-                if "paused" in data:
-                    state.optimizer.configure(paused=bool(data["paused"]))
-                if "reset" in data:
-                    state.optimizer.reset_beta(float(data.get("beta_init", 3.0)))
-                config = {
-                    key: data[key]
-                    for key in [
-                        "mode", "eta", "eps", "beta_max", "noise_sigma",
-                        "telemetry", "target_pi", "composite_lambda",
-                    ]
-                    if key in data
-                }
-                if config:
-                    state.optimizer.configure(**config)
-            except Exception as e:
-                print("Neural WS control error:", e)
-                traceback.print_exc()
-
-    except WebSocketDisconnect:
-        pass
-    finally:
-        sender_task.cancel()
-        _neural_queues.pop(websocket, None)

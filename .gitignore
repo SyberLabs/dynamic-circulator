@@ -10,43 +10,11 @@ htmlcov/
 venv/
 env/
 
-# Generated experiment outputs
+# Generated outputs / scratch
 *_output.json
-*_quick_output.json
-!semiconductor_onshoring_falsification_output.json
-!semiconductor_onshoring_classification_robustness_output.json
-!semiconductor_onshoring_feasibility_preference_output.json
-!semiconductor_onshoring_model_benchmark_output.json
-!neural_v2_adversarial_switch_output.json
-!neural_v2_adaptive_routing_output.json
-!neural_v2_frontier_output.json
-!neural_v2_hard_router_benchmark_output.json
-!neural_v2_router_benchmark_output.json
-!neural_v2_seed_validation_output.json
-!leverage_screen_output.json
-output.txt
 output*.txt
-deep_output*.txt
-diagnose_output.txt
-comparison_output.txt
-investigate_output*.txt
-test_output.txt
-
-# Local scratch and cluster runs
 scratch/
-slurm/
 tmp_*/
-figures/
-!figures/
-!figures/*.svg
-!visualizer/public/figures/
-!visualizer/public/figures/*.svg
-
-# Frozen paper artifacts retained for estimator-bias audit
-!archive/
-!archive/pre_estimator_fix_neural_v2/
-!archive/pre_estimator_fix_neural_v2/*
-!archive/pre_estimator_fix_neural_v2/*_output.json
 
 # Frontend build artifacts
 node_modules/

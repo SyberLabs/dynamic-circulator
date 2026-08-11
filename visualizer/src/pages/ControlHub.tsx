@@ -73,19 +73,6 @@ const TOPOLOGY_VIEWS: PortCard[] = [
 
 const FIXED_LABS: PortCard[] = [
   {
-    route: '/neural',
-    kicker: 'Lab',
-    title: 'Adaptive Routing Lab',
-    accent: '#9b6cf7',
-    Icon: BrainCircuit,
-    body: (
-      <>
-        Tune the optimizer objective and observe how transition memory reorganizes
-        stationary mass on a neural-style graph.
-      </>
-    ),
-  },
-  {
     route: '/compare',
     kicker: 'Lab',
     title: 'Topology Comparison',
@@ -255,11 +242,12 @@ export default function ControlHub() {
   return (
     <main className="hub-shell">
       <header className="hub-hero">
-        <span>SyberLabs Intelligence Field</span>
-        <h1>Topology Control Hub</h1>
+        <span>SyberLabs · Towards a Dynamic Topology</span>
+        <h1>Dynamic Circulator</h1>
         <p>
-          Select a graph, then inspect transition probabilities or run live agent flow.
-          Fixed labs use their own scenario graphs for deeper comparisons.
+          A circulation kernel: agents route over a weighted graph by telemetry-conditioned
+          transition probabilities that co-evolve with where the agents have been. Choose a
+          graph, then inspect its transition field or run live agent flow.
         </p>
       </header>
 

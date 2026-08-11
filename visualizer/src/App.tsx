@@ -3,7 +3,6 @@ import BaseSystem from './pages/BaseSystem';
 import ComparePort from './pages/ComparePort';
 import ControlHub from './pages/ControlHub';
 import MallPort from './pages/MallPort';
-import NeuralPort from './pages/NeuralPort';
 import './index.css';
 
 const NavLayer = () => {
@@ -43,7 +42,6 @@ export default function App() {
         <Route path="/base" element={<BaseSystem />} />
         <Route path="/mall" element={<MallPort />} />
         <Route path="/compare" element={<ComparePort />} />
-        <Route path="/neural" element={<NeuralPort />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Router>

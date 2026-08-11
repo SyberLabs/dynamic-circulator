@@ -1034,6 +1034,59 @@ class DynamicTopologyKernel:
         return paths
 
     # -------------------------------------------------------------------
+    # Effective-topology rewriting — activate / prune edges over a fixed
+    # physical substrate. The graph is derived from the distance matrix
+    # (0 < D_ij < inf => edge), so toggling an edge is a local update to
+    # D, the adjacency mask, and the softmax -inf mask. This is the minimal
+    # combinatorial-rewrite primitive: physical topology (which edges can
+    # ever exist) is fixed; effective topology (which are currently usable)
+    # changes. Callers own the consolidation policy that decides when.
+    # -------------------------------------------------------------------
+
+    def set_edge_active(
+        self,
+        from_idx: int,
+        to_idx: int,
+        active: bool,
+        distance: Optional[float] = None,
+    ) -> None:
+        """
+        Activate or prune a single directed edge at runtime.
+
+        Activating requires a finite positive `distance` (the physical
+        traversal cost of the edge); if omitted, a previously stored latent
+        distance for this edge is reused. Pruning sets D_ij = inf. The
+        edge's beta and sponsor-friction entries are left at their existing
+        values (default beta, zero friction for a never-used latent edge),
+        and the stationary / leverage / diagnostic machinery picks up the
+        new admissibility on its next call.
+        """
+        if from_idx == to_idx:
+            raise ValueError("cannot toggle a self-loop")
+        if not hasattr(self, "_latent_distance"):
+            self._latent_distance: dict[tuple[int, int], float] = {}
+        D = self.topo.distance_matrix
+        if active:
+            d = distance if distance is not None else self._latent_distance.get((from_idx, to_idx))
+            if d is None or not (0.0 < float(d) < np.inf):
+                raise ValueError(
+                    "activating an edge needs a finite positive distance"
+                )
+            D[from_idx, to_idx] = float(d)
+            self.topo.adjacency_mask[from_idx, to_idx] = True
+            self._neg_inf_mask[from_idx, to_idx] = 0.0
+        else:
+            if np.isfinite(D[from_idx, to_idx]):
+                self._latent_distance[(from_idx, to_idx)] = float(D[from_idx, to_idx])
+            D[from_idx, to_idx] = np.inf
+            self.topo.adjacency_mask[from_idx, to_idx] = False
+            self._neg_inf_mask[from_idx, to_idx] = -np.inf
+
+    def edge_active(self, from_idx: int, to_idx: int) -> bool:
+        """Whether an edge is currently in the effective topology."""
+        return bool(self.topo.adjacency_mask[from_idx, to_idx])
+
+    # -------------------------------------------------------------------
     # Sponsor API — mutate the beta tensor at runtime
     # -------------------------------------------------------------------
 
@@ -2100,6 +2153,264 @@ class DynamicTopologyKernel:
         )
         return np.where(self.topo.adjacency_mask[:, :, np.newaxis], G, 0.0)
 
+    # -------------------------------------------------------------------
+    # Controllability of circulation — the reachable set of stationary
+    # shifts under budgeted edge interventions. J is the discrete
+    # control-input operator; choice-point invariance is its zero columns.
+    # -------------------------------------------------------------------
+
+    def leverage_operator(
+        self,
+        telemetry: np.ndarray,
+        edges: Optional[list] = None,
+        step: Optional[int] = None,
+    ) -> tuple[np.ndarray, list]:
+        """
+        Flatten the stationary-leverage Jacobian into a control-input
+        operator J of shape (N, m).
+
+        J[:, e] = d pi / d S_e  for the e-th admissible edge, so a friction
+        control u in R^m produces first-order shift d pi ~ J u. Two
+        structural facts hold exactly and are the basis of the
+        controllability theory:
+
+          - column-sum zero: 1^T J[:, e] = 0 for all e (mass conserved),
+            so range(J) lies in the simplex tangent T = {v : 1^T v = 0};
+          - choice-point columns vanish: if edge e leaves a singleton-
+            outdegree node, P_e -> 1, the Bernoulli factor P_e(1-P_e) -> 0,
+            and J[:, e] = 0. Proposition 1 is exactly col_e(J) = 0.
+
+        Parameters
+        ----------
+        edges : list of (i, j) or None
+            Actuator edges, in the returned order. None uses all admissible
+            edges in row-major order.
+
+        Returns
+        -------
+        J : np.ndarray, shape (N, m)
+        edge_list : list of (int, int)
+            The edge for each column, in order.
+        """
+        G = self.stationary_leverage(telemetry, step=step)
+        if edges is None:
+            edge_list = [tuple(map(int, e)) for e in np.argwhere(self.topo.adjacency_mask)]
+        else:
+            edge_list = [(int(i), int(j)) for (i, j) in edges]
+            for (i, j) in edge_list:
+                if not self.topo.adjacency_mask[i, j]:
+                    raise ValueError(f"edge ({i},{j}) is not admissible")
+        J = np.stack([G[i, j] for (i, j) in edge_list], axis=1) if edge_list else \
+            np.zeros((self.topo.N, 0))
+        return J, edge_list
+
+    def controllability_gramian(
+        self,
+        telemetry: np.ndarray,
+        edges: Optional[list] = None,
+        step: Optional[int] = None,
+    ) -> dict:
+        """
+        Stationary-response Gram matrix W_c = J J^T of the frozen-telemetry
+        chain. (Named to avoid confusion with the classical LTI controllability
+        Gramian, which describes temporal reachability of a dynamical system;
+        this is a static equilibrium-response object — the Gram matrix of the
+        leverage columns, whose range is the first-order reachable set.)
+
+        W_c is symmetric PSD and acts on the simplex tangent T. Its
+        eigenvectors are the principal reachable directions of stationary-
+        distribution motion, ordered by eigenvalue (how cheaply mass moves
+        that way per unit L2 budget). The rank of W_c equals rank(J): the
+        first-order stationary-reachable dimension. Full reachability
+        of simplex-tangent targets is rank(J) = N - 1. The smallest positive
+        eigenvalue is the weakest locally reachable stationary direction.
+
+        Returns
+        -------
+        dict with keys:
+            gramian : (N, N) symmetric PSD matrix
+            eigenvalues : (N,) descending, clipped at 0
+            principal_directions : (N, N) columns are eigenvectors,
+                same order as eigenvalues (the top ones are the cheapest
+                reachable directions; the smallest nonzero one is the
+                structural bottleneck)
+            rank : int, numerical rank of J at tol
+            controllable_dim : int, N - 1 (target dimension for full control)
+        """
+        J, _ = self.leverage_operator(telemetry, edges=edges, step=step)
+        W_c = J @ J.T
+        # symmetric eigendecomposition; W_c is PSD up to roundoff
+        evals, evecs = np.linalg.eigh(W_c)
+        order = np.argsort(evals)[::-1]
+        evals = np.clip(evals[order], 0.0, None)
+        evecs = evecs[:, order]
+        rank = int(np.linalg.matrix_rank(J, tol=1e-9)) if J.shape[1] else 0
+        return {
+            "gramian": W_c,
+            "eigenvalues": evals,
+            "principal_directions": evecs,
+            "rank": rank,
+            "controllable_dim": self.topo.N - 1,
+        }
+
+    def reachable_min_budget(
+        self,
+        telemetry: np.ndarray,
+        target: np.ndarray,
+        channel: str = "mixed",
+        edges: Optional[list] = None,
+        step: Optional[int] = None,
+        enforce_simplex: bool = True,
+    ) -> dict:
+        """
+        Minimum-L1-budget edge intervention reaching a target first-order
+        stationary shift, as a linear program:
+
+            minimize  ||u||_1
+            s.t.      J u = target,
+                      u in U (channel),
+                      pi + J u >= 0  (simplex feasibility, if enforced).
+
+        channel:
+            "mixed"   : u unconstrained (friction may rise or fall).
+            "penalty" : u >= 0 (friction only increases; penalize edges).
+            "subsidy" : u <= 0 (friction only decreases; subsidize edges).
+
+        The target must lie in the simplex tangent (1^T target = 0) since
+        range(J) does; a nonzero component along 1 is unreachable and
+        reported as infeasible. The returned support is the constructive
+        design: which edges to actuate and by how much.
+
+        Returns
+        -------
+        dict with keys:
+            feasible : bool
+            budget : float (L1 norm of u, inf if infeasible)
+            control : (m,) friction deltas per actuator edge
+            support : list of (edge, delta) for |delta| > tol
+            residual : ||J u - target||_2
+            edge_list : actuator edges in column order
+        """
+        from scipy.optimize import linprog
+
+        J, edge_list = self.leverage_operator(telemetry, edges=edges, step=step)
+        N, m = J.shape
+        target = np.asarray(target, dtype=np.float64)
+        if target.shape != (N,):
+            raise ValueError(f"target must have shape ({N},). Got {target.shape}")
+        if channel not in ("mixed", "penalty", "subsidy"):
+            raise ValueError("channel must be 'mixed', 'penalty', or 'subsidy'")
+
+        infeasible = {
+            "feasible": False,
+            "budget": float("inf"),
+            "control": np.zeros(m),
+            "support": [],
+            "residual": float("inf"),
+            "edge_list": edge_list,
+        }
+        # target must be simplex-tangent to be in range(J)
+        if abs(float(target.sum())) > 1e-8:
+            return infeasible
+        if m == 0:
+            return infeasible
+
+        pi = self.stationary_distribution(telemetry)
+
+        # Split u = u+ - u- (both >= 0) to linearize the L1 objective.
+        # For penalty/subsidy channels one half is pinned to zero.
+        obj = np.ones(2 * m)
+        A_eq = np.hstack([J, -J])
+        b_eq = target
+        bounds = []
+        for _ in range(m):  # u+
+            bounds.append((0.0, None))
+        for _ in range(m):  # u-
+            bounds.append((0.0, None))
+        if channel == "penalty":
+            bounds = [(0.0, None)] * m + [(0.0, 0.0)] * m
+        elif channel == "subsidy":
+            bounds = [(0.0, 0.0)] * m + [(0.0, None)] * m
+
+        A_ub = b_ub = None
+        if enforce_simplex:
+            # pi + J u >= 0  ->  -J u <= pi  ->  -J(u+ - u-) <= pi
+            A_ub = np.hstack([-J, J])
+            b_ub = pi
+
+        res = linprog(
+            obj, A_eq=A_eq, b_eq=b_eq, A_ub=A_ub, b_ub=b_ub,
+            bounds=bounds, method="highs",
+        )
+        if not res.success:
+            return infeasible
+        u = res.x[:m] - res.x[m:]
+        residual = float(np.linalg.norm(J @ u - target))
+        if residual > 1e-6:
+            return infeasible
+        tol = 1e-9
+        support = [
+            (edge_list[e], float(u[e])) for e in range(m) if abs(u[e]) > tol
+        ]
+        return {
+            "feasible": True,
+            "budget": float(np.abs(u).sum()),
+            "control": u,
+            "support": support,
+            "residual": residual,
+            "edge_list": edge_list,
+        }
+
+    def linearization_validity_radius(
+        self,
+        telemetry: np.ndarray,
+        control: np.ndarray,
+        eps: float = 0.01,
+        edges: Optional[list] = None,
+        step: Optional[int] = None,
+        max_scale: float = 5.0,
+        n_samples: int = 40,
+    ) -> dict:
+        """
+        Largest scaling t of a friction control for which the first-order
+        prediction pi + t J u stays within eps (L1) of the exact stationary
+        distribution pi(S + t u).
+
+        This bounds the linear regime honestly: below the returned radius
+        the analytic reachable set is trustworthy; above it, paired
+        simulation must take over. The friction perturbation is applied on
+        the actuator edges and reverted (no persistent kernel mutation).
+
+        Returns
+        -------
+        dict:
+            radius : float (largest validated t, 0 if even the smallest
+                sampled step already exceeds eps)
+            samples : list of (t, l1_error)
+        """
+        J, edge_list = self.leverage_operator(telemetry, edges=edges, step=step)
+        control = np.asarray(control, dtype=np.float64)
+        pi0 = self.stationary_distribution(telemetry)
+        predicted_dir = J @ control
+        saved = self._sponsor_friction.copy()
+        samples = []
+        radius = 0.0
+        try:
+            for t in np.linspace(max_scale / n_samples, max_scale, n_samples):
+                for e, (i, j) in enumerate(edge_list):
+                    self._sponsor_friction[i, j] = saved[i, j] + t * control[e]
+                pi_exact = self.stationary_distribution(telemetry)
+                pi_pred = pi0 + t * predicted_dir
+                l1 = float(np.abs(pi_exact - pi_pred).sum())
+                samples.append((float(t), l1))
+                if l1 <= eps:
+                    radius = float(t)
+                else:
+                    break
+        finally:
+            self._sponsor_friction = saved
+        return {"radius": radius, "samples": samples}
+
     def flow_diagnostic(
         self,
         telemetry: np.ndarray,
@@ -2322,3 +2633,8 @@ if __name__ == "__main__":
     for i, label in enumerate(labels):
         row_str = "".join(f"{P[i,j]:14.4f}" for j in range(len(labels)))
         print(f"  {label:20s} {row_str}")
+
+
+# Public brand alias — the package is presented as the "Dynamic Circulator".
+# The class name is retained for API/test stability.
+DynamicCirculator = DynamicTopologyKernel
